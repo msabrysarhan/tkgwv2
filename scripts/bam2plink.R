@@ -19,6 +19,8 @@
 # Output:
 # - individual text-PLINK
 
+library(parallel)
+
 args = commandArgs(trailingOnly=TRUE)
 pywd = args[length(args)]
 args = args[-length(args)]
@@ -61,9 +63,12 @@ minBQ = 30
 if(length(grep("minBQ",args)) != 0) { minBQ = strsplit(args[grep("minBQ",args)],"=")[[1]][2] }
 excludeTerminalReadBases = FALSE
 if(length(grep("excludeTerminalReadBases",args)) != 0) { excludeTerminalReadBases = TRUE }
+threads = detectCores()  # Default to the number of available cores
+if(length(grep("threads",args)) != 0) { threads = as.numeric(strsplit(args[grep("threads",args)],"=")[[1]][2]) }
 
 cat("\n\t # Files to be processed:\n")
-for(i in list.files(pattern = paste0(bamExtension,"$"))) { cat(paste0("\t\t ",i,"\n"))}
+bam_files = list.files(pattern = paste0(bamExtension,"$"))
+for(i in bam_files) { cat(paste0("\t\t ",i,"\n"))}
 cat("\t # Arguments used:\n")
 for(i in gsub("="," = ",args)) { cat(paste0("\t\t ",i,"\n"))}
 
@@ -76,34 +81,44 @@ if(length(error1)>0) {
   cat("\t # ERROR: The following required file(s) could not be found:\n")
   for(e in error1) { cat("\t\t ",e,"\n") }
 } else {
-  if(length(error1)==0) {
-    for(i in list.files(pattern = paste0(bamExtension,"$"))) {
-      sid = strsplit(i,bamExtension)[[1]]
-      
-      ## Generate pileup using samtools
-      commA = paste0("samtools mpileup -Q ",minBQ," -q ",minMQ," -B -f ",referenceGenome," -l ",gwvList," ",i," > ",sid,".pileupsamtools.gwv.txt")
-      system(commA, ignore.stderr=T)
-      
-      ## Convert sample positions to PLINK's range format ### INSTANTANEOUS
-      comm2 = paste0("sed 's/chr//' ",sid,".pileupsamtools.gwv.txt | awk '{print $1,$2,$2,NR}' > ",sid,".plinkRange")
-      system(comm2)
-      
-      ## Get map file using PLINK, and delete ped file: ### SLOW but still faster than awk
-      comm3 = paste0("plink --bfile ",gwvPlink," --extract range ",sid,".plinkRange --recode --out ",sid," --allow-no-sex")
-      system(comm3,ignore.stdout = TRUE)
-      
-      unlink(paste0(sid,".ped"))
-      unlink(paste0(sid,".plinkRange"))
-      unlink(paste0(sid,".log"))
-      unlink(paste0(sid,".nosex"))
-    }
-    ## Convert pileup to text-PLINK
-    if(excludeTerminalReadBases == FALSE) { excludeTerminalReadBases = "False"}
-    if(excludeTerminalReadBases == TRUE) { excludeTerminalReadBases = "True"}
-    if(file.exists(paste0(pywd,"/scripts/pileup2ped.py")) == F) {cat("\t # ERROR: File 'pileup2ped.py' could not be found in 'scripts' folder\n")} else {
-      comm3b = paste0(pywd,"/scripts/pileup2ped.py ",excludeTerminalReadBases)
+  process_bam <- function(i) {
+    sid = strsplit(i, bamExtension)[[1]]
+    cat(paste0("\n[", Sys.time(), "] Processing file: ", i, "\n"))
+    
+    ## Generate pileup using samtools
+    commA = paste0("samtools mpileup -Q ", minBQ, " -q ", minMQ, " -B -f ", referenceGenome, " -l ", gwvList, " ", i, " > ", sid, ".pileupsamtools.gwv.txt")
+    system(commA, ignore.stderr = TRUE)
+    cat(paste0("[", Sys.time(), "] Generated pileup for: ", i, "\n"))
+    
+    ## Convert sample positions to PLINK's range format
+    comm2 = paste0("sed 's/chr//' ", sid, ".pileupsamtools.gwv.txt | awk '{print $1,$2,$2,NR}' > ", sid, ".plinkRange")
+    system(comm2)
+    cat(paste0("[", Sys.time(), "] Converted to PLINK range for: ", i, "\n"))
+    
+    ## Get map file using PLINK, and delete ped file
+    comm3 = paste0("plink --bfile ", gwvPlink, " --extract range ", sid, ".plinkRange --recode --out ", sid, " --allow-no-sex")
+    system(comm3, ignore.stdout = TRUE)
+    cat(paste0("[", Sys.time(), "] Generated PLINK map for: ", i, "\n"))
+    
+    unlink(paste0(sid, ".plinkRange"))
+    unlink(paste0(sid, ".log"))
+    unlink(paste0(sid, ".nosex"))
+    cat(paste0("[", Sys.time(), "] Cleaned up intermediate files for: ", i, "\n"))
+    
+    ## Convert pileup to text-PLINK using pileup2ped.py
+    if(file.exists(paste0(pywd, "/scripts/pileup2ped.py")) == FALSE) {
+      cat("\t # ERROR: File 'pileup2ped.py' could not be found in 'scripts' folder\n")
+    } else {
+      comm3b = paste0("python3 ", pywd, "/scripts/pileup2ped.py ", excludeTerminalReadBases, " --sample_id=", sid)
       system(comm3b)
+      cat(paste0("[", Sys.time(), "] Converted pileup to text-PLINK for sample: ", sid, "\n"))
     }
   }
-  cat(paste0(" # [",Sys.time(),"] All BAM files processed\n"))
+  
+  ## Use parallel processing
+  cat(paste0("\n # Using ", threads, " threads for processing BAM files.\n"))
+  mclapply(bam_files, process_bam, mc.cores = threads)
+  
+  ## Final log message
+  cat(paste0(" # [", Sys.time(), "] All BAM files processed\n"))
 }

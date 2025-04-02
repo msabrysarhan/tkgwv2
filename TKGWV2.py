@@ -23,8 +23,8 @@ if "bam2plink" in argList:
 if "plink2tkrelated" in argList:
 	argList.remove("plink2tkrelated")
 
-short_options = "hr:L:e:p:m:b:tf:d:i:v"
-long_options = ["help", "referenceGenome=", "gwvList=", "bamExtension=", "gwvPlink=", "minMQ=", "minBQ=", "excludeTerminalReadBases", "freqFile=", "dyads=", "ignoreThresh=", "verbose"]
+short_options = "hr:L:e:p:m:b:tf:d:i:vT:"
+long_options = ["help", "referenceGenome=", "gwvList=", "bamExtension=", "gwvPlink=", "minMQ=", "minBQ=", "excludeTerminalReadBases", "freqFile=", "dyads=", "ignoreThresh=", "verbose", "threads="]
 
 try:
     options, args = getopt.getopt(argList, short_options, long_options)
@@ -34,9 +34,11 @@ except:
 
 bam2plinkArgs = []
 plink2tkrelatedArgs = []
+threads = None  # Default value for threads
+
 for opt, value in options:
-	if opt in ['-h', '--help']:
-		print("""TKGWV2.py 
+    if opt in ['-h', '--help']:
+        print("""TKGWV2.py 
 Version 1.0b - Released 07/2022
 
 Utilities and options:
@@ -61,42 +63,65 @@ Utilities and options:
     - d, --dyads                      <path> Tab-spaced text file with each specified pair to be analysed per line, otherwise will run on every possible pair. Useful when analysing temporal or geographically distant pairs (as long as both are within the variation captured by the --freqFile)
     - i, --ignoreThresh               <int> Default 1. Threshold for the minimum number of SNPs allowed to estimate relatedness
     - v, --verbose                    Use verbose mode and print extended information throughout file processing
+    - T, --threads                    <int> Number of threads to use for parallel processing
 
 Example run command:
-  $ ./TKGWV2.py bam2plink --referenceGenome full_karyo.fa --gwvList 1000GP3_22M_noFixed_noChr.bed --bamExtension final.bam --gwvPlink DummyDataset_EUR_22M_noFixed plink2tkrelated --freqFile 1000GP3_EUR_22M_noFixed.frq""")
-		
-	elif opt in ['-r', '--referenceGenome']:
-		bam2plinkArgs.append("=".join(['--referenceGenome',value]))
-	elif opt in ['-L', '--gwvList']:
-		bam2plinkArgs.append("=".join(['--gwvList',value]))
-	elif opt in ['-e', '--bamExtension']:
-		bam2plinkArgs.append("=".join(['--bamExtension',value]))
-	elif opt in ['-p', '--gwvPlink']:
-		bam2plinkArgs.append("=".join(['--gwvPlink',value]))
-	elif opt in ['-t', '--excludeTerminalReadBases']:
-		bam2plinkArgs.append('--excludeTerminalReadBases')
-	elif opt in ['-m', '--minMQ']:
-		bam2plinkArgs.append("=".join(["--minMQ",value]))
-	elif opt in ['-b', '--minBQ']:
-		bam2plinkArgs.append("=".join(["--minBQ",value]))
-	elif opt in ['-f', '--freqFile']:
-		plink2tkrelatedArgs.append("=".join(['--freqFile',value]))
-	elif opt in ['-d', '--dyads']:
-		plink2tkrelatedArgs.append("=".join(["--dyads",value]))
-	elif opt in ['-i', '--ignoreThresh']:
-		plink2tkrelatedArgs.append("=".join(["--ignoreThresh",value]))
-	elif opt in ['-v', '--verbose']:
-		plink2tkrelatedArgs.append("--verbose")
+  $ ./TKGWV2.py bam2plink --referenceGenome full_karyo.fa --gwvList 1000GP3_22M_noFixed_noChr.bed --bamExtension final.bam --gwvPlink DummyDataset_EUR_22M_noFixed plink2tkrelated --freqFile 1000GP3_EUR_22M_noFixed.frq --threads 4""")
+    elif opt in ['-r', '--referenceGenome']:
+        bam2plinkArgs.append("=".join(['--referenceGenome', value]))
+    elif opt in ['-L', '--gwvList']:
+        bam2plinkArgs.append("=".join(['--gwvList', value]))
+    elif opt in ['-e', '--bamExtension']:
+        bam2plinkArgs.append("=".join(['--bamExtension', value]))
+    elif opt in ['-p', '--gwvPlink']:
+        bam2plinkArgs.append("=".join(['--gwvPlink', value]))
+    elif opt in ['-t', '--excludeTerminalReadBases']:
+        bam2plinkArgs.append('--excludeTerminalReadBases')
+    elif opt in ['-m', '--minMQ']:
+        bam2plinkArgs.append("=".join(["--minMQ", value]))
+    elif opt in ['-b', '--minBQ']:
+        bam2plinkArgs.append("=".join(["--minBQ", value]))
+    elif opt in ['-f', '--freqFile']:
+        plink2tkrelatedArgs.append("=".join(['--freqFile', value]))
+    elif opt in ['-d', '--dyads']:
+        plink2tkrelatedArgs.append("=".join(["--dyads", value]))
+    elif opt in ['-i', '--ignoreThresh']:
+        plink2tkrelatedArgs.append("=".join(["--ignoreThresh", value]))
+    elif opt in ['-v', '--verbose']:
+        plink2tkrelatedArgs.append("--verbose")
+    elif opt in ['-T', '--threads']:
+        threads = value
 
 if len(bam2plinkArgs) > 0 and "bam2plink" not in sys.argv:
-	print("\n Warning: Arguments for unused 'bam2plink' found. Will be ignored.")
+    print("\n Warning: Arguments for unused 'bam2plink' found. Will be ignored.")
 if len(plink2tkrelatedArgs) > 0 and "plink2tkrelated" not in sys.argv:
-	print("\n Warning: Arguments for unused 'plink2tkrelated' found. Will be ignored.")
+    print("\n Warning: Arguments for unused 'plink2tkrelated' found. Will be ignored.")
+
+if threads:
+    # Convert threads to integer and validate
+    try:
+        threads = int(threads)
+        if threads <= 0:
+            print("\n Error: Number of threads must be positive integer")
+            quit()
+    except ValueError:
+        print("\n Error: Invalid thread value. Must be an integer")
+        quit()
+        
+    # Append thread arguments to both R script calls
+    bam2plinkArgs.append(f"threads={threads}")
+    plink2tkrelatedArgs.append(f"threads={threads}")
 
 if "bam2plink" in sys.argv:
-	os.system("Rscript " + pywd + "/scripts/bam2plink.R " + " ".join(bam2plinkArgs) + " " + pywd)
+    bam2plink_cmd = f"Rscript {pywd}/scripts/bam2plink.R {' '.join(bam2plinkArgs)} {pywd}"
+    print(f"\n[INFO] Running bam2plink with {threads} threads")
+    os.system(bam2plink_cmd)
 
 if "plink2tkrelated" in sys.argv and "bam2plink" in sys.argv:
-	os.system("Rscript " + pywd + "/scripts/plink2tkrelated.R " + " ".join(plink2tkrelatedArgs) + " bam2plink" + " " + pywd)
+    plink2tk_cmd = f"Rscript {pywd}/scripts/plink2tkrelated.R {' '.join(plink2tkrelatedArgs)} bam2plink {pywd}"
+    print(f"[INFO] Running plink2tkrelated with {threads} threads")
+    os.system(plink2tk_cmd)
 elif "plink2tkrelated" in sys.argv:
-	os.system("Rscript " + pywd + "/scripts/plink2tkrelated.R " + " ".join(plink2tkrelatedArgs) + " " + pywd)
+    plink2tk_cmd = f"Rscript {pywd}/scripts/plink2tkrelated.R {' '.join(plink2tkrelatedArgs)} {pywd}"
+    print(f"[INFO] Running plink2tkrelated with {threads} threads")
+    os.system(plink2tk_cmd)
